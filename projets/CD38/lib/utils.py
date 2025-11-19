@@ -8,3 +8,6 @@ def get_geojson_with_score_and_bbox(bbox:BoundingBox,score):
     geojson= json.loads( to_geojson(shape))
     geojson["properties"]={"score":score}
     return geojson
+
+def gdf_to_geojson(gdf):
+    return json.loads(gdf.to_json())

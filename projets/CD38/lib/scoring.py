@@ -1,18 +1,25 @@
 
 
-from .hiking import get_intersecting_hiking_trails, load_hiking_trails
-from .geonature import get_intersecting_observations, load_geonature
-from .type import BoundingBox
-from shapely import box, to_geojson
-import json
+from lib.grid import make_grid
+from .hiking import load_hiking_trails
+from .geonature import load_geonature
+import geopandas as gpd
 
 
 class Scoring:
-    def __init__(self,hiking_trail_file):
-        self.hiking_trails = load_hiking_trails(hiking_trail_file)
+    def __init__(self):
+        self.hiking_trails = load_hiking_trails()
         self.observations = load_geonature()
- 
-    def compute_score(self,bbox: BoundingBox):
-        return 1-(1/len(get_intersecting_hiking_trails(self.hiking_trails,bbox))) + (1-(1/len(get_intersecting_observations(self.observations,bbox))))
+        self.grid = make_grid(self.observations,1000)
     
+    def get_grid_of_interest(self,geometry):
+        return self.grid[self.grid.intersects(geometry)]
+    
+    def compute_score_for_grid(self,grid_of_interest:gpd.GeoDataFrame):
+        goi = grid_of_interest.copy()
+        goi["nb_observations"] = goi.geometry.apply(lambda x: self.observations.geometry.intersects(x).sum())
+        goi["nb_hiking_trails"] = goi.geometry.apply(lambda x: self.hiking_trails.geometry.intersects(x).sum())
+        goi["score"] = 1-(1/(1+goi["nb_hiking_trails"])) + (1-(1/(1+goi["nb_observations"])))
+        return goi
+
     
