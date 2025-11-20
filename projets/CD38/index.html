@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Assessment Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        #container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+        
+        #sidebar {
+            width: 350px;
+            background: #f8f9fa;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.05);
+        }
+        
+        .section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .section h2 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .info-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .info-value {
+            color: #333;
+            font-size: 16px;
+            margin-top: 5px;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+        }
+        
+        .btn-secondary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            display: none;
+        }
+        
+        .error.active {
+            display: block;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            display: none;
+        }
+        
+        .success.active {
+            display: block;
+        }
+        
+        .instruction {
+            background: #e7f3ff;
+            border-left: 4px solid #667eea;
+            padding: 12px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #004085;
+        }
+        
+        #apiUrl {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🗺️ Risk Assessment Map</h1>
+    </div>
+    
+    <div id="container">
+        <div id="map"></div>
+        
+        <div id="sidebar">
+            <div class="section">
+                <h2>⚙️ Configuration</h2>
+                <div class="info-item">
+                    <div class="info-label">API URL</div>
+                    <input type="text" id="apiUrl" value="http://localhost:8000/risk/geojson/" placeholder="http://localhost:8000/risk/geojson/">
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📍 Instructions</h2>
+                <div class="instruction">
+                    1. Utilisez les outils de dessin pour créer une géométrie sur la carte<br>
+                    2. Cliquez sur "Analyser le risque"<br>
+                    3. Téléchargez le résultat en GeoJSON
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>🎯 Géométrie sélectionnée</h2>
+                <div id="geometryInfo" class="info-item">
+                    <div class="info-value">Aucune géométrie sélectionnée</div>
+                </div>
+                <button id="analyzeBtn" class="btn btn-primary" disabled>Analyser le risque</button>
+            </div>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Analyse en cours...</div>
+            </div>
+            
+            <div class="error" id="error"></div>
+            <div class="success" id="success"></div>
+            
+            <div class="section" id="resultsSection" style="display: none;">
+                <h2>📊 Résultats</h2>
+                <div id="results"></div>
+                <button id="downloadBtn" class="btn btn-secondary">📥 Télécharger le résultat (GeoJSON)</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script>
+        // Initialisation de la carte
+        const map = L.map('map').setView([45.191404,5.620228], 10);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Couche pour les dessins
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+        
+        // Contrôles de dessin
+        const drawControl = new L.Control.Draw({
+            edit: {
+                featureGroup: drawnItems,
+                remove: true
+            },
+            draw: {
+                polygon: true,
+                rectangle: true,
+                circle: true,
+                marker: false,
+                circlemarker: false,
+                polyline: false
+            }
+        });
+        map.addControl(drawControl);
+        
+        let currentGeometry = null;
+        let resultData = null;
+        
+        // Événements de dessin
+        map.on(L.Draw.Event.CREATED, function(event) {
+            drawnItems.clearLayers();
+            const layer = event.layer;
+            drawnItems.addLayer(layer);
+            currentGeometry = layer.toGeoJSON();
+            updateGeometryInfo();
+        });
+        
+        map.on(L.Draw.Event.EDITED, function(event) {
+            const layers = event.layers;
+            layers.eachLayer(function(layer) {
+                currentGeometry = layer.toGeoJSON();
+                updateGeometryInfo();
+            });
+        });
+        
+        map.on(L.Draw.Event.DELETED, function() {
+            currentGeometry = null;
+            updateGeometryInfo();
+            hideResults();
+        });
+        
+        function updateGeometryInfo() {
+            const geometryInfo = document.getElementById('geometryInfo');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            
+            if (currentGeometry) {
+                const type = currentGeometry.geometry.type;
+                geometryInfo.innerHTML = `
+                    <div class="info-label">Type</div>
+                    <div class="info-value">${type}</div>
+                `;
+                analyzeBtn.disabled = false;
+            } else {
+                geometryInfo.innerHTML = '<div class="info-value">Aucune géométrie sélectionnée</div>';
+                analyzeBtn.disabled = true;
+            }
+        }
+        
+        async function analyzeRisk() {
+            if (!currentGeometry) return;
+            
+            const apiUrl = document.getElementById('apiUrl').value;
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const success = document.getElementById('success');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            
+            // Réinitialiser les messages
+            error.classList.remove('active');
+            success.classList.remove('active');
+            loading.classList.add('active');
+            analyzeBtn.disabled = true;
+            hideResults();
+            
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(currentGeometry)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Erreur HTTP: ${response.status}`);
+                }
+                
+                resultData = await response.json();
+                
+                if (resultData.error) {
+                    throw new Error(resultData.error);
+                }
+                
+                displayResults(resultData);
+                success.textContent = '✓ Analyse terminée avec succès';
+                success.classList.add('active');
+                
+            } catch (err) {
+                error.textContent = `❌ Erreur: ${err.message}`;
+                error.classList.add('active');
+                console.error('Error:', err);
+            } finally {
+                loading.classList.remove('active');
+                analyzeBtn.disabled = false;
+            }
+        }
+        
+        function displayResults(data) {
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsDiv = document.getElementById('results');
+            
+            // Afficher les résultats
+            let html = '';
+            
+            if (data.type === 'FeatureCollection') {
+                html += `<div class="info-item">
+                    <div class="info-label">Nombre de features</div>
+                    <div class="info-value">${data.features.length}</div>
+                </div>`;
+                
+                // Afficher les features sur la carte
+                const resultLayer = L.geoJSON(data, {
+                    style: function(feature) {
+                        return {
+                            fillColor: getColor(feature.properties),
+                            weight: 2,
+                            opacity: 1,
+                            color: 'white',
+                            fillOpacity: 0.7
+                        };
+                    },
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties) {
+                            let popupContent = '<div style="max-height: 200px; overflow-y: auto;">';
+                            for (let key in feature.properties) {
+                                popupContent += `<b>${key}:</b> ${feature.properties[key]}<br>`;
+                            }
+                            popupContent += '</div>';
+                            layer.bindPopup(popupContent);
+                        }
+                    }
+                });
+                resultLayer.addTo(map);
+                map.fitBounds(resultLayer.getBounds());
+            }
+            
+            resultsDiv.innerHTML = html || '<div class="info-item"><div class="info-value">Données reçues</div></div>';
+            resultsSection.style.display = 'block';
+        }
+        
+        function getColor(properties) {
+            // Personnaliser selon vos données
+            // Exemple: si vous avez un score de risque
+            if (properties.score) {
+                const risk = properties.score;
+                return risk > 0.8 ? '#d73027' :
+                       risk > 0.6 ? '#fc8d59' :
+                       risk > 0.4 ? '#fee08b' :
+                       risk > 0.2 ? '#d9ef8b' :
+                                    '#91cf60';
+            }
+            return '#3388ff';
+        }
+        
+        function hideResults() {
+            document.getElementById('resultsSection').style.display = 'none';
+            // Supprimer les couches de résultats de la carte
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.GeoJSON) {
+                    map.removeLayer(layer);
+                }
+            });
+        }
+        
+        function downloadResults() {
+            if (!resultData) return;
+            
+            const dataStr = JSON.stringify(resultData, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `risk_assessment_${new Date().toISOString()}.geojson`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+        
+        // Event listeners
+        document.getElementById('analyzeBtn').addEventListener('click', analyzeRisk);
+        document.getElementById('downloadBtn').addEventListener('click', downloadResults);
+    </script>
+</body>
+</html>
