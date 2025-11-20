@@ -1,16 +1,14 @@
-from typing import Any, Union
-
-from lib.type import BoundingBox,Ponderation
 import json
-from lib.scoring import Scoring
+from typing import Any
+
 from fastapi import FastAPI
-from lib.utils import to_geojson
-from shapely.geometry import box
-from shapely.geometry import shape
 from fastapi.responses import HTMLResponse
+from lib.scoring import Scoring
+from lib.type import Ponderation
+from shapely.geometry import GeometryCollection, MultiPolygon, box, shape
 
 app = FastAPI()
-score_instance = Scoring(resolution=1000)
+score_instance = Scoring(resolution=500)
 pond=Ponderation(0.35,0.4,0.1,0.15)
 
 @app.get("/")
@@ -26,9 +24,15 @@ def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=N
     Parameters
     ----------
     x1 : float
+        min x
     y1 : float
+        min y
     x2 : float
+        max x
     y2 : float
+        max y
+    bbox : str
+        a string format of the bbox "x1,y1,x2,y2" (eg. 5.530345,45.180724,5.655314,45.254969)
 
     Returns
     -------
@@ -45,35 +49,42 @@ def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=N
     roi = score_instance.get_grid_of_interest(box(x1, y1, x2, y2))
     return json.loads(score_instance.compute_score_for_grid(roi,pond).to_json())
 
+
 @app.post("/risk/geojson/")
 def read_risk_geojson(geojson: dict[str, Any]):
-    """
-    Compute the risk on a geojson object
 
-    Parameters
-    ----------
-    geojson : dict
-        a geojson object (Feature, FeatureCollection, or Geometry)
-
-    Returns
-    -------
-    dict
-        a geojson with risk values
-    """
     try:
-        # Gérer différents types de GeoJSON
+        # --- Handle FeatureCollection ---
         if geojson.get("type") == "FeatureCollection":
-            if not geojson.get("features"):
+            features = geojson.get("features", [])
+            if not features:
                 return {"error": "FeatureCollection is empty"}
-            geometry = shape(geojson["features"][0]["geometry"])
+
+            shapely_geoms = [shape(feat["geometry"]) for feat in features]
+
+            # Extract only Polygons / MultiPolygons
+            polygons = []
+            for g in shapely_geoms:
+                if g.geom_type == "Polygon":
+                    polygons.append(g)
+                elif g.geom_type == "MultiPolygon":
+                    polygons.extend(list(g.geoms))
+
+            if polygons:
+                geometry = MultiPolygon(polygons)
+            else:
+                # fallback: everything else
+                geometry = GeometryCollection(shapely_geoms)
+
         elif geojson.get("type") == "Feature":
             geometry = shape(geojson["geometry"])
+
         else:
             geometry = shape(geojson)
-        
+
+        # Compute risk
         roi = score_instance.get_grid_of_interest(geometry)
-        return json.loads(score_instance.compute_score_for_grid(roi,pond).to_json())
-    
+        return json.loads(score_instance.compute_score_for_grid(roi, pond).to_json())
+
     except Exception as e:
         return {"error": f"Failed to process GeoJSON: {str(e)}"}
-    
