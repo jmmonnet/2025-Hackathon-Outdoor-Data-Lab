@@ -1,6 +1,6 @@
 from typing import Any, Union
 
-from lib.type import BoundingBox
+from lib.type import BoundingBox,Ponderation
 import json
 from lib.scoring import Scoring
 from fastapi import FastAPI
@@ -10,7 +10,8 @@ from shapely.geometry import shape
 from fastapi.responses import HTMLResponse
 
 app = FastAPI()
-score_instance = Scoring()
+score_instance = Scoring(resolution=1000)
+pond=Ponderation(0.35,0.4,0.1,0.15)
 
 @app.get("/")
 def read_root():
@@ -42,7 +43,7 @@ def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=N
     elif x1 is None or y1 is None or x2 is None or y2 is None:
         return "Missing parameters"
     roi = score_instance.get_grid_of_interest(box(x1, y1, x2, y2))
-    return json.loads(score_instance.compute_score_for_grid(roi).to_json())
+    return json.loads(score_instance.compute_score_for_grid(roi,pond).to_json())
 
 @app.post("/risk/geojson/")
 def read_risk_geojson(geojson: dict[str, Any]):
@@ -71,7 +72,7 @@ def read_risk_geojson(geojson: dict[str, Any]):
             geometry = shape(geojson)
         
         roi = score_instance.get_grid_of_interest(geometry)
-        return json.loads(score_instance.compute_score_for_grid(roi).to_json())
+        return json.loads(score_instance.compute_score_for_grid(roi,pond).to_json())
     
     except Exception as e:
         return {"error": f"Failed to process GeoJSON: {str(e)}"}
