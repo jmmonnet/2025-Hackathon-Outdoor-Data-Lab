@@ -6,10 +6,19 @@ from fastapi.responses import HTMLResponse
 from lib.scoring import Scoring
 from lib.type import Ponderation
 from shapely.geometry import GeometryCollection, MultiPolygon, box, shape
-
+from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 score_instance = Scoring(resolution=500)
 pond=Ponderation(0.35,0.4,0.1,0.15)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -52,39 +61,37 @@ def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=N
 
 @app.post("/risk/geojson/")
 def read_risk_geojson(geojson: dict[str, Any]):
+    
+    # --- Handle FeatureCollection ---
+    if geojson.get("type") == "FeatureCollection":
+        features = geojson.get("features", [])
+        if not features:
+            return {"error": "FeatureCollection is empty"}
 
-    try:
-        # --- Handle FeatureCollection ---
-        if geojson.get("type") == "FeatureCollection":
-            features = geojson.get("features", [])
-            if not features:
-                return {"error": "FeatureCollection is empty"}
+        shapely_geoms = [shape(feat["geometry"]) for feat in features]
 
-            shapely_geoms = [shape(feat["geometry"]) for feat in features]
+        # Extract only Polygons / MultiPolygons
+        polygons = []
+        for g in shapely_geoms:
+            if g.geom_type == "Polygon":
+                polygons.append(g)
+            elif g.geom_type == "MultiPolygon":
+                polygons.extend(list(g.geoms))
 
-            # Extract only Polygons / MultiPolygons
-            polygons = []
-            for g in shapely_geoms:
-                if g.geom_type == "Polygon":
-                    polygons.append(g)
-                elif g.geom_type == "MultiPolygon":
-                    polygons.extend(list(g.geoms))
-
-            if polygons:
-                geometry = MultiPolygon(polygons)
-            else:
-                # fallback: everything else
-                geometry = GeometryCollection(shapely_geoms)
-
-        elif geojson.get("type") == "Feature":
-            geometry = shape(geojson["geometry"])
-
+        if polygons:
+            geometry = MultiPolygon(polygons)
         else:
-            geometry = shape(geojson)
+            # fallback: everything else
+            geometry = GeometryCollection(shapely_geoms)
 
-        # Compute risk
-        roi = score_instance.get_grid_of_interest(geometry)
-        return json.loads(score_instance.compute_score_for_grid(roi, pond).to_json())
+    elif geojson.get("type") == "Feature":
+        geometry = shape(geojson["geometry"])
 
-    except Exception as e:
-        return {"error": f"Failed to process GeoJSON: {str(e)}"}
+    else:
+        geometry = shape(geojson)
+
+    # Compute risk
+    roi = score_instance.get_grid_of_interest(geometry)
+    return json.loads(score_instance.compute_score_for_grid(roi, pond).to_json())
+
+    
