@@ -1,0 +1,354 @@
+---
+title: "Agrégation par maille de la fréquentation Strava et des observations Géonature."
+subtitle: "Écocompteurs"
+author: "Jean-Matthieu Monnet (INRAE LESSEM)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+Ce document Rmarkdown contient les scripts :
+
+- agrégation par maille de la fréquentation (Strava) et des observations (Géonature),
+- import et agrégation par jour des données écocompteur.
+
+Le dossier où se trouve le script doit comporte un sous-dossier "data PNE" contenant les données nécessaires à l'analyse.
+
+# Maillage
+
+## Création du maillage
+
+On créé un maillage carré de 500 m de côté, aligné sur les valeurs entières en Lambert 93.
+
+```{r maillage}
+# taille de la maille carree (cote en m)
+tile_size <- 500
+# emprise du parc
+parc <- sf::st_read("./Data PNE/contour_PNE/PNE_aoa.shp", quiet = TRUE)
+# bounding box
+bbox <- sf::st_bbox(parc)
+#
+# fonction pour aligner la bounding box sur des valeurs entieres
+align_km <- function(x, km = tile_size) {
+  c(floor(x[1] / km) * km, ceiling(x[2] / km) * km)
+}
+#
+# valeurs entieres
+x_range <- align_km(c(bbox["xmin"], bbox["xmax"]), km = tile_size)
+y_range <- align_km(c(bbox["ymin"], bbox["ymax"]), km = tile_size)
+# 
+# modification de la bounding box
+bbox[c(1, 3)] <- x_range
+bbox[c(2, 4)] <- y_range
+#
+# creer le maillage sur la bounding box
+maillage <- sf::st_make_grid(sf::st_as_sfc(bbox), cellsize = tile_size)
+#
+# garder seulement les mailles qui intersectent le parc
+maillage <- maillage[sf::st_intersects(maillage, parc, sparse = FALSE), ]
+#
+# ajouter une id par maille 
+maillage <- cbind(maillage, data.frame(maille_id = 1:length(maillage)))
+maillage <- sf::st_as_sf(maillage)
+#
+```
+
+```{r maillageAfficher}
+# affichage
+plot(sf::st_geometry(maillage))
+plot(sf::st_geometry(parc), add = TRUE, border = "red")
+```
+
+
+# Strava
+
+## Extraction des fichiers zip
+
+Extraction et renommage des shapefile Strava, à ne faire qu'une seule fois.
+
+```{r unzipStrava}
+# dossier cible
+dest_dir <- "./Data PNE/Strava/extraction/"
+# crée le dossier si nécessaire
+dir.create(dest_dir, showWarnings = FALSE)  
+
+# fichiers zip strava
+zip_fichiers <- dir("./Data PNE/Strava/", pattern = "zip$", full.names = TRUE)
+# 
+# pour chaque fichier
+for (zip_file in zip_fichiers)
+{
+  # Nom de base pour renommer
+  base_name <- tools::file_path_sans_ext(basename(zip_file))
+  #
+  # Dossier temporaire pour décompression
+  tmp_dir <- tempdir()
+  # unzip
+  unzip(zip_file, exdir = tmp_dir)
+  # fichiers obtenus
+  files <- list.files(tmp_dir, full.names = TRUE)
+  # Renommer chaque fichier en utilisant le nom du ZIP
+  file_ext <- tools::file_ext(files)
+  new_names <- file.path(dirname(files), paste0(base_name, ".", file_ext))
+  file.rename(files, new_names)
+  # Déplacer les fichiers vers un dossier cible
+  dest_files <- file.path(dest_dir, basename(new_names))
+  file.rename(new_names, dest_files)
+}
+```
+
+## Charger les données
+
+Le script charge les fichiers shapefile de Strava, joint la table attributaire csv, et reprojette en Lambert 93.
+
+```{r loadStrava}
+# fichiers shp
+fichiers_shp <- dir("./Data PNE/Strava/extraction/", pattern = "shp$", full.names = TRUE)
+#
+# charger dans une liste R 
+liste_strava <- lapply(fichiers_shp, function(x)
+{
+  # lire le shp
+  strava1 <- sf::st_read(x, quiet = TRUE)
+  # reprojeter
+  strava1 <- sf::st_transform(strava1, crs = sf::st_crs(2154))
+  # lire les donnees csv associées
+  strava1db <- read.table(file = gsub(".shp$", ".csv", x), sep = ",", header = TRUE)
+  # joindre les données
+  strava1 <- merge(strava1, strava1db, by.x = "edgeUID", by.y = "edge_uid")
+}
+)
+# noms de la liste
+names(liste_strava) <- gsub(".shp$", "", basename(fichiers_shp))
+```
+
+Ensuite on regroupe les données Isère et Hautes-Alpes pour chaque année, et on enlève les segments qui se trouvent à l'extérieur du PNE.
+
+```{r loadStrava}
+# annees
+annees <- substr(names(liste_strava), 1, 4)
+#
+# regrouper par annee
+liste_strava_annee <- list()
+# pour chaque annee
+for (annee in unique(annees))
+{
+  # identifiant les donnees a concatener
+  i <- which(annees == annee)
+  # concatener
+  dummy <- do.call(rbind, liste_strava[i])
+  # ne garder que ce qui est dans le parc
+  dummy <- sf::st_intersection(dummy, sf::st_buffer(parc, 1000))
+  # garder resultat
+  liste_strava_annee[[annee]] <- dummy
+}
+# effacer la liste précédente
+rm(liste_strava)
+# copie temporaire
+# rm(liste_strava)
+# save(list=ls(), file = "~/strava.rda")
+```
+
+## Agrégation par maille
+
+On compte pour chaque année la somme du champ "total_trip_count" de Strava dans chaque maille. Un segment est affecté à la maille qui contient son centroïde.
+
+**Idéalement il faudrait tenir compte de la taille des segments en pondérant le nombre de passage par la longueur du segment (sommer les *personne.m*), en découpant les segments par les mailles.** Il serait intéressant ensuite de comparer:
+
+- la fréquentation totale par maille (somme des personnes.m par hectare),
+- le linéaire de sentier par maille (m),
+- le nombre de personnes par linéaire de sentier
+
+```{r aggrStrava}
+# pour chaque annee, sommer le nombre de passage par maille
+count_by_maille_id <- lapply(liste_strava_annee, 
+                             function(x)
+                             {
+                               dummy <- sf::st_centroid(x)
+                               dummy <- sf::st_join(dummy, maillage)
+                               aggregate(total_trip_count ~ maille_id, data = dummy, FUN = function(x) sum(x, na.rm = TRUE))
+                             })
+# affecter un nom en fonction de l'annee
+for (i in names(count_by_maille_id))
+{
+  names(count_by_maille_id[[i]])[2] <- paste0("total_trip_count_", i)
+}
+# joindre les donnees dans les mailles
+for (i in names(count_by_maille_id))
+{
+  maillage <- merge(maillage, count_by_maille_id[[i]], all.x = TRUE)
+}
+#
+# remplacer les NA par 0
+maillage$total_trip_count_2020[is.na(maillage$total_trip_count_2020)] <- 0
+maillage$total_trip_count_2021[is.na(maillage$total_trip_count_2021)] <- 0
+maillage$total_trip_count_2022[is.na(maillage$total_trip_count_2022)] <- 0
+maillage$total_trip_count_2023[is.na(maillage$total_trip_count_2023)] <- 0
+maillage$total_trip_count_2024[is.na(maillage$total_trip_count_2024)] <- 0
+# sauvegarder temporaire
+# maillage <- sf::st_write(maillage, dsn = "~/maillage.gpkg", overwrite = TRUE)
+```
+
+Carte en échelle log
+
+```{r plotStrava}
+logS <- maillage['total_trip_count_2024']
+logS$log <- log(logS$total_trip_count_2024 + 1)
+plot(logS['log'], border = NA, main = "Fréquentation 2024 en personne.segment (log)")
+```
+
+
+# Geonature
+
+## Charger données
+
+On charge les données Géonature 2024 sur l'emprise de coeur de parc à partir du fichier geojson. Les champs intéressants sont :
+
+- "nom_valide" pour l'espèce,
+- "date_debut" pour la date d'observation,
+- "uicn" : on retient pour simplifier la première catégorie UICN renseignée dans ce champ.
+
+```{r chargeGeonature}
+geonature <- sf::st_read("./Data PNE/Geonature_PNE_2024.geojson", quiet = TRUE)
+# 
+# Mise en forme
+# garder le nom valide
+geonature$nom_valide <- factor(geonature$nom_valide)
+# garder la date de debut comme date
+geonature$date_debut <- as.POSIXct(geonature$date_debut, format = "%Y-%M-%D")
+# garder la permiere classe uicn renseignee
+geonature$uicn <- substr(geonature$listes_rouge, 6, 7)
+#
+# champs utiles
+geonature <- geonature[, c("nom_valide", "date_debut", "patrimonial", "uicn")]
+```
+
+## Agrégation par maille
+
+On calcule le nombre d'espèces observées par maille.
+
+```{r agrGeonature}
+# transformer avec les centroides en cas de multiples geometries
+geonature_c <- sf::st_transform(sf::st_centroid(geonature), sf::st_crs(2154))
+# affecter la maille a chaque observation
+geonature_c <- sf::st_join(geonature_c, maillage['maille_id'])
+#
+# nombre d'especes uniques par id maille
+dummy <- aggregate(nom_valide ~ maille_id, data = geonature_c, FUN = function(x) length(unique(x)))
+names(dummy)[2] <- "N_espece"
+# joindre avec le maillage
+maillage <- merge(maillage, dummy, all.x = TRUE)
+#
+# remplacer vide par 0
+maillage$N_espece[is.na(maillage$N_espece)] <- 0
+#
+# sauver en json
+# sf::st_write(maillage, dsn = "~/maillage.geojson", driver = "GeoJSON", append = FALSE)
+```
+
+```{r plotGeonature}
+logS <- maillage['N_espece']
+logS$log <- log(logS$N_espece + 1)
+plot(logS['log'], border = NA, main = "Nb espèces observées 2024 en coeur de parc (log)")
+```
+
+
+# ÉcoCompteur
+
+Chargement des fichiers écocompteurs (sauf piéton-vélo)
+
+"EcocompteurBarriere" était séparé par "," au lieu de ";".
+
+```{r chargerEcocompteur}
+# fichiers à lire
+fichiers_compteur <- dir("./Data PNE/Compteur-pedestre/", pattern = "^Ecocompteur", full.names = TRUE)
+# charger les fichiers et les mettre dans une liste
+compteur_pieton <- lapply(fichiers_compteur, function(x)
+  {
+  dummy <- read.csv(file = x,, sep = ";", header = FALSE, skip = 1)
+  # ncol(dummy)
+  dummy <- dummy[, 1:2]
+  names(dummy) <- c("Date", "N")
+  dummy$site <- gsub("Ecocompteur", "", gsub(".csv$", "", basename(x)))
+  dummy
+})
+# concatener la liste
+compteur_pieton <- do.call(rbind, compteur_pieton)
+# formater la date
+compteur_pieton$Date <- as.POSIXct(compteur_pieton$Date, format = "%Y-%m-%dT%H:%M:%S")
+# champ site
+compteur_pieton$site <- factor(compteur_pieton$site)
+# extraire annee et jour
+compteur_pieton$Annee <- format(compteur_pieton$Date, "%Y")
+compteur_pieton$Jour <- format(compteur_pieton$Date, "%Y-%m-%d")
+```
+
+# Agrégation
+
+On fait la somme par jour.
+On exporte pour les données pour le compteur de Danchère, année 2024.
+
+```{r agrEcocompteur}
+# agréger par jour
+compteur_pieton_jour <- aggregate(N ~ Jour + site, data =compteur_pieton, sum)
+# extraire l'année
+compteur_pieton_jour$Annee <- substr(compteur_pieton_jour$Jour, 1, 4)
+# garder uniquement 2024
+compteur_pieton_jour_2024 <- compteur_pieton_jour[compteur_pieton_jour$Annee == "2024",]
+# garder uniquement 2024 et Danch-re
+compteur_pieton_jour_Danchere_2024 <- compteur_pieton_jour_2024[compteur_pieton_jour_2024$site == "Danchere", ]
+#
+# exporter la donnée
+# write.table(compteur_pieton_jour_Danchere_2024, file = "~/compteur_jour_Danchere_2024.csv", row.names = FALSE, sep = ";")
+
+# agreger par annee
+compteur_pieton_annee <- aggregate(N ~ Annee + site, data =compteur_pieton, sum)
+# extraire 2024
+compteur_pieton_annee_2024 <- compteur_pieton_annee[compteur_pieton_annee$Annee == "2024",]
+compteur_pieton_annee_2024$Annee <- NULL 
+# exporter
+# write.table(compteur_pieton_annee_2024, file = "~/compteur_2024.csv", row.names = FALSE, sep = ";")
+```
+
+Diagramme de fréquentation : les données n'existent que jusqu'au 31 juillet ?
+
+```{r Danchère}
+test <- compteur_pieton_jour_Danchere_2024
+test$Jour <- as.Date(test$Jour)
+barplot(N ~ Jour, data = test)
+```
+
+Le code suivant vise à importer les données des compteurs piéton-vélo, mais la mise au format correcte de la date n'a pu être réalisée.
+
+```{r testCompteurPietonVelo}
+# fichiers pieton_velo
+fichiers_compteur <- dir("./Data PNE/Compteur-pedestre/", pattern = "pieton-velo", full.names = TRUE)
+# charger
+compteur_velo <- lapply(fichiers_compteur, function(x)
+{
+  dummy <- read.csv(file = x, sep = ",", header = TRUE)
+  dummy$site <- gsub("_pieton-velo.csv$", "", basename(x))
+  dummy
+})
+# concatener
+compteur_velo <- do.call(rbind, compteur_velo)
+# sommer les allers, retours, pietons, vélos
+compteur_velo$Piétons.IN[is.na(compteur_velo$Piétons.IN)] <- 0
+compteur_velo$Piétons.OUT[is.na(compteur_velo$Piétons.OUT)] <- 0
+compteur_velo$N <- compteur_velo$Piétons.IN + compteur_velo$Piétons.OUT
+compteur_velo$site <- factor(compteur_velo$site)
+# formater la date (non résolu !!!!!)
+# Sys.setlocale("LC_TIME", "fr_FR.UTF-8")
+# compteur_velo$date_debut <- as.POSIXct(compteur_velo$Time, format = "%d %b. %Y %H:%M")
+summary(compteur_velo)
+```
+
+
+
