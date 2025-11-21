@@ -7,9 +7,10 @@ from lib.scoring import Scoring
 from lib.type import Ponderation
 from shapely.geometry import GeometryCollection, MultiPolygon, box, shape
 from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI()
 score_instance = Scoring(resolution=500)
-pond=Ponderation(0.35,0.4,0.1,0.15)
+pond = Ponderation(0.35, 0.4, 0.1, 0.15)
 
 
 app.add_middleware(
@@ -20,15 +21,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
     return HTMLResponse(open("index.html").read(), status_code=200)
 
 
 @app.get("/risk/")
-def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=None):
+def read_risk(
+    x1: float = None,
+    y1: float = None,
+    x2: float = None,
+    y2: float = None,
+    bbox: str = None,
+):
     """
-    Compute the risk on a bounding box defined by its top left coordinates (x1,y1) and its bottom right coordinates (x2,y2) 
+    Compute the risk on a bounding box defined by its top left coordinates (x1,y1) and its bottom right coordinates (x2,y2)
 
     Parameters
     ----------
@@ -56,12 +64,12 @@ def read_risk(x1:float=None,y1:float=None,x2:float=None,y2:float=None,bbox:str=N
     elif x1 is None or y1 is None or x2 is None or y2 is None:
         return "Missing parameters"
     roi = score_instance.get_grid_of_interest(box(x1, y1, x2, y2))
-    return json.loads(score_instance.compute_score_for_grid(roi,pond).to_json())
+    return json.loads(score_instance.compute_score_for_grid(roi, pond).to_json())
 
 
 @app.post("/risk/geojson/")
 def read_risk_geojson(geojson: dict[str, Any]):
-    
+
     # --- Handle FeatureCollection ---
     if geojson.get("type") == "FeatureCollection":
         features = geojson.get("features", [])
@@ -93,5 +101,3 @@ def read_risk_geojson(geojson: dict[str, Any]):
     # Compute risk
     roi = score_instance.get_grid_of_interest(geometry)
     return json.loads(score_instance.compute_score_for_grid(roi, pond).to_json())
-
-    

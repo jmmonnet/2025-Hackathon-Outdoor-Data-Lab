@@ -2,6 +2,7 @@ import geopandas as gpd
 from shapely.geometry import Polygon
 import numpy as np
 
+
 def make_grid(gdf, cell_size_m):
     """
     Create a grid over the extent of a GeoDataFrame.
@@ -23,12 +24,14 @@ def make_grid(gdf, cell_size_m):
     for x in x_coords:
         for y in y_coords:
             polys.append(
-                Polygon([
-                    (x, y),
-                    (x + cell_size_m, y),
-                    (x + cell_size_m, y + cell_size_m),
-                    (x, y + cell_size_m)
-                ])
+                Polygon(
+                    [
+                        (x, y),
+                        (x + cell_size_m, y),
+                        (x + cell_size_m, y + cell_size_m),
+                        (x, y + cell_size_m),
+                    ]
+                )
             )
 
     # 4. Convert to GeoDataFrame
