@@ -1,45 +1,82 @@
-from lib.habitat import load_habitat
-from lib.user_frequency import load_user_frequency
-from lib.grid import make_grid
-from .hiking import load_hiking_trails
-from .geonature import load_geonature
-import geopandas as gpd
-from .type import Ponderation
-from tqdm import tqdm
 import os
+import logging
+import geopandas as gpd
+from tqdm import tqdm
+from .type import Ponderation
+from .grid import make_grid
 
+# For pandas, to use progress_apply method
 tqdm.pandas()
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+handler = logging.StreamHandler()
+handler.setFormatter(
+    logging.Formatter(
+        fmt="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+)
+logger.addHandler(handler)
 
 
 class Scoring:
-    def __init__(self, resolution=500):
+    def __init__(
+        self,
+        resolution: int = 500,
+        hiking_trails_fn: str = "ressources/fusion_sentiers_OSM-PDIPR.geojson",
+        observations_fn: str = "ressources/geonature_data_ens.geojson",
+        user_frequency_fn: str = "ressources/user_frequency.gpkg",
+        habitat_fn: str = "ressources/habitats_ENS_patrimoniaux.gpkg",
+    ):
+        grid_filename = f"ressources/grid_{resolution}.gpkg"
 
-        fn = f"ressources/grid_{resolution}.gpkg"
-        if not os.path.exists(fn):
-            print("load hiking trails")
-            self.hiking_trails = load_hiking_trails(
-                "ressources/fusion_sentiers_OSM-PDIPR.geojson"
-            )
-            self.hiking_trails = self.hiking_trails.to_crs(epsg=4326)
-            print("load observations")
-            self.observations = load_geonature()
-            print("load user frequency")
-            self.user_frequency = load_user_frequency()  # .sample(n=2000)
-            print("load habitat")
-            self.habitat = load_habitat()
-            self.habitat = self.habitat.to_crs(epsg=4326)
+        if not os.path.exists(grid_filename):
+            logger.info("Loading hiking trails...")
+            self.hiking_trails = gpd.read_file(hiking_trails_fn).to_crs(epsg=4326)
+            logger.info("Hiking trails loaded.")
 
-            print("make grid")
+            logger.info("Loading observations...")
+            self.observations = gpd.read_file(observations_fn)
+            logger.info("Observations loaded.")
+
+            logger.info("Loading user frequency data...")
+            self.user_frequency = gpd.read_file(user_frequency_fn)
+            logger.info("User frequency data loaded.")
+
+            logger.info("Loading habitat data...")
+            self.habitat = gpd.read_file(habitat_fn).to_crs(epsg=4326)
+            logger.info("Habitat data loaded.")
+
+            logger.info("Generating grid (resolution=%s)...", resolution)
             self.grid = make_grid(self.observations, resolution)
-            print("compute scores")
+            logger.info("Grid generated.")
+
+            logger.info("Computing scores...")
             self.compute_each_score_per_cell()
-            print("save grid")
-            self.grid.to_file(fn)
+            logger.info("Scores computed.")
+
+            logger.info("Saving grid to %s", grid_filename)
+            self.grid.to_file(grid_filename)
+            logger.info("Grid saved.")
         else:
-            print("load existing grid")
-            self.grid = gpd.read_file(fn)
+            logger.info("Loading existing grid from %s...", grid_filename)
+            self.grid = gpd.read_file(grid_filename)
+            logger.info("Grid loaded.")
 
     def compute_each_score_per_cell(self):
+        """
+        Compute scores for each cell in the grid.
+
+        Scores are computed as follows:
+        - species_presence_sc: sum of Note totale for each observation in the cell
+        - hiking_trails_sc: sum of hiking trails in the cell
+        - user_frequency_sc: sum of user frequency in the cell
+        - habitat_presence_sc: sum of habitat presence in the cell
+
+        Scores are stored in the grid GeoDataFrame.
+        """
+
         def species_score(x):
             inters_obs = self.observations[self.observations.geometry.intersects(x)]
             inters_obs = inters_obs.drop_duplicates(subset=["nom_valide"])
@@ -59,11 +96,44 @@ class Scoring:
         )
 
     def get_grid_of_interest(self, geometry):
+        """
+        Return a GeoDataFrame of the grid cells (maille in french) that intersects
+        with the given geometry.
+
+        Parameters
+        ----------
+        geometry : shapely.geometry.Geometry
+            The geometry to intersect with the grid
+
+        Returns
+        -------
+        gpd.GeoDataFrame
+            A GeoDataFrame of the grid cells that intersect with the given geometry
+        """
         return self.grid[self.grid.intersects(geometry)]
 
     def compute_score_for_grid(
         self, grid_of_interest: gpd.GeoDataFrame, ponderation: Ponderation
     ):
+        """
+        Compute the score for each cell in the grid of interest.
+
+        The score is computed by multiplying each score
+        (species presence, hiking trails, user frequency, habitat presence)
+        by its corresponding ponderation value, and then summing all the scores.
+
+        Parameters
+        ----------
+        grid_of_interest : gpd.GeoDataFrame
+            A GeoDataFrame of the grid cells that intersect with the given geometry
+        ponderation : Ponderation
+            The ponderation values for each score
+
+        Returns
+        -------
+        gpd.GeoDataFrame
+            A GeoDataFrame of the grid cells with their corresponding scores
+        """
         goi = grid_of_interest.copy()
         goi["species_presence_sc_ponderated"] = ponderation.species_presence * (
             goi.species_presence_sc / goi.species_presence_sc.max()
@@ -77,7 +147,6 @@ class Scoring:
         goi["habitat_presence_sc_ponderated"] = ponderation.habitat_presence * (
             goi.habitat_presence_sc / goi.habitat_presence_sc.max()
         )
-        # print(goi["habitat_presence_sc_ponderated"])
         goi["habitat_presence_sc_ponderated"] = goi[
             "habitat_presence_sc_ponderated"
         ].fillna(0)
