@@ -124,7 +124,9 @@ source venv/bin/activate
 fastapi dev api.py
 ```
 
+### Récupération des données
 
+Les données seront bientôt disponibles ici.
 
 ### 🔌 Endpoints disponibles
 
