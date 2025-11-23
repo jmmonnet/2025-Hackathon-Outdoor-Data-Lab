@@ -16,7 +16,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 Ce document Rmarkdown contient les scripts :
 
-- agrégation par maille de la fréquentation (Strava) et des observations (Géonature),
+- agrégation par maille de la fréquentation (Strava) et des observations (GeoNature),
 - import et agrégation par jour des données écocompteur.
 
 Le dossier où se trouve le script doit comporte un sous-dossier "data PNE" contenant les données nécessaires à l'analyse.
