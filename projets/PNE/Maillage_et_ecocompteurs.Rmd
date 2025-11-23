@@ -1,5 +1,5 @@
 ---
-title: "Agrégation par maille de la fréquentation Strava et des observations Géonature."
+title: "Agrégation par maille de la fréquentation Strava et des observations GeoNature."
 subtitle: "Écocompteurs"
 author: "Jean-Matthieu Monnet (INRAE LESSEM)"
 date: "`r Sys.Date()`"
