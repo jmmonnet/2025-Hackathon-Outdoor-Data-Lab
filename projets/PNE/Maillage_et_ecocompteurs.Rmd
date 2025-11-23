@@ -209,7 +209,7 @@ plot(logS['log'], border = NA, main = "Fréquentation 2024 en personne.segment (
 
 ## Charger données
 
-On charge les données Géonature 2024 sur l'emprise de coeur de parc à partir du fichier geojson. Les champs intéressants sont :
+On charge les données GeoNature 2024 sur l'emprise de cœur de parc à partir du fichier geojson. Les champs intéressants sont :
 
 - "nom_valide" pour l'espèce,
 - "date_debut" pour la date d'observation,
