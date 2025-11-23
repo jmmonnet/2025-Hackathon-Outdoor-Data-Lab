@@ -205,7 +205,7 @@ plot(logS['log'], border = NA, main = "Fréquentation 2024 en personne.segment (
 ```
 
 
-# Geonature
+# GeoNature
 
 ## Charger données
 
